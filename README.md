@@ -25,6 +25,8 @@ jobs:
         uses: fastapi-practices/plugin-release@v1
         with:
           push-to: your-username/plugins
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 ```
 
 ## Inputs
@@ -33,6 +35,12 @@ jobs:
 | ------------- | -------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
 | `push-to`     | Yes      | —                             | The repository to push the update branch to (`owner/repo`), e.g. `your-username/plugins` |
 | `plugin-name` | No       | Repository name of the caller | Plugin name, must match the submodule directory name in `fastapi-practices/plugins`      |
+
+## Environment variables
+
+| Variable   | Required | Description                                                                                                                        |
+| ---------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `GH_TOKEN` | Yes      | GitHub personal access token with write access to the push-to repository, see [creating a PAT](https://github.com/settings/tokens) |
 
 ## How it works
 

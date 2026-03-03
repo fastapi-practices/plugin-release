@@ -52,7 +52,7 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: ${{ inputs.push-to }}
-        token: ${{ github.token }}
+        token: ${{ env.GH_TOKEN }}
         submodules: true
         fetch-depth: 0
 
@@ -164,5 +164,3 @@ runs:
         PR_NUMBER=$(echo "${PR_URL}" | grep -oE '[0-9]+$')
         echo "pr-number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
         echo "::notice::Pull request created: ${PR_URL}"
-      env:
-        GH_TOKEN: ${{ github.token }}
