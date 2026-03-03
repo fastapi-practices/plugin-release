@@ -41,6 +41,7 @@ runs:
           exit 1
         fi
         RELEASE_VERSION="${{ github.ref_name }}"
+        RELEASE_VERSION="${RELEASE_VERSION#v}"
         if [ "${TOML_VERSION}" != "${RELEASE_VERSION}" ]; then
           echo "::error::Version mismatch: plugin.toml has '${TOML_VERSION}' but release tag is '${RELEASE_VERSION}'"
           exit 1
