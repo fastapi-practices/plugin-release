@@ -96,7 +96,7 @@ runs:
     - name: Update submodule
       shell: bash
       run: |
-        git submodule update --remote "plugins/${{ inputs.plugin-name }}"
+        git submodule update --init --remote "plugins/${{ inputs.plugin-name }}"
         git add "plugins/${{ inputs.plugin-name }}"
 
     - name: Check for changes
