@@ -1,0 +1,167 @@
+name: FBA Plugin Release
+description: Automatically update FastAPI Best Architecture plugin version after a release
+author: fastapi-practices
+
+branding:
+  icon: package
+  color: gray-dark
+
+inputs:
+  plugin-name:
+    description: >
+      The name of the plugin, must match the submodule directory name in fastapi-practices/plugins.
+      Defaults to the repository name of the caller.
+    required: false
+    default: ${{ github.event.repository.name }}
+  push-to:
+    description: >
+      The repository to push the update branch to (owner/repo).
+      e.g. "your-username/plugins"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout plugin repository
+      uses: actions/checkout@v4
+      with:
+        path: _plugin
+
+    - name: Validate plugin version
+      shell: bash
+      run: |
+        TOML="_plugin/plugin.toml"
+        if [ ! -f "${TOML}" ]; then
+          echo "::error::plugin.toml not found in the plugin repository"
+          exit 1
+        fi
+        TOML_VERSION=$(awk -F'=' '/^\[plugin\]/{found=1} found && /^version/{gsub(/[ \t"'"'"']/, "", $2); print $2; exit}' "${TOML}")
+        if [ -z "${TOML_VERSION}" ]; then
+          echo "::error::version field not found in plugin.toml"
+          exit 1
+        fi
+        RELEASE_VERSION="${{ github.ref_name }}"
+        if [ "${TOML_VERSION}" != "${RELEASE_VERSION}" ]; then
+          echo "::error::Version mismatch: plugin.toml has '${TOML_VERSION}' but release tag is '${RELEASE_VERSION}'"
+          exit 1
+        fi
+        echo "Version '${RELEASE_VERSION}' matches plugin.toml"
+
+    - name: Checkout push-to repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.push-to }}
+        token: ${{ github.token }}
+        submodules: true
+        fetch-depth: 0
+
+    - name: Sync fork with upstream
+      shell: bash
+      run: |
+        git remote add upstream https://github.com/fastapi-practices/plugins.git
+        git fetch upstream
+        UPSTREAM_BRANCH=$(git remote show upstream | awk '/HEAD branch/ {print $NF}')
+        echo "UPSTREAM_BRANCH=${UPSTREAM_BRANCH}" >> "$GITHUB_ENV"
+        git checkout "${UPSTREAM_BRANCH}"
+        git merge "upstream/${UPSTREAM_BRANCH}" --ff-only
+
+    - name: Validate plugin exists
+      shell: bash
+      run: |
+        PLUGIN_PATH="plugins/${{ inputs.plugin-name }}"
+        if [ ! -f ".gitmodules" ]; then
+          echo "::error::No .gitmodules file found in the plugins repository"
+          exit 1
+        fi
+        if ! grep -q "path = ${PLUGIN_PATH}" .gitmodules; then
+          echo "::error::Plugin '${PLUGIN_PATH}' not found in .gitmodules"
+          exit 1
+        fi
+        echo "Plugin '${PLUGIN_PATH}' found in .gitmodules"
+
+    - name: Configure git
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Create update branch
+      shell: bash
+      id: create-branch
+      run: |
+        BRANCH_NAME="update-plugin/${{ inputs.plugin-name }}-${{ github.ref_name }}"
+        echo "branch-name=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
+        git checkout -b "${BRANCH_NAME}"
+
+    - name: Update submodule
+      shell: bash
+      run: |
+        git submodule update --remote "plugins/${{ inputs.plugin-name }}"
+        git add "plugins/${{ inputs.plugin-name }}"
+
+    - name: Check for changes
+      shell: bash
+      id: check-changes
+      run: |
+        if git diff --cached --quiet; then
+          echo "has-changes=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Submodule 'plugins/${{ inputs.plugin-name }}' is already up to date. Skipping PR creation."
+        else
+          echo "has-changes=true" >> "$GITHUB_OUTPUT"
+          NEW_SHA=$(git diff --cached --submodule=short | grep "^+Subproject" | awk '{print $3}')
+          OLD_SHA=$(git diff --cached --submodule=short | grep "^-Subproject" | awk '{print $3}')
+          echo "new-sha=${NEW_SHA}" >> "$GITHUB_OUTPUT"
+          echo "old-sha=${OLD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Updated from ${OLD_SHA} to ${NEW_SHA}"
+        fi
+
+    - name: Commit changes
+      shell: bash
+      if: steps.check-changes.outputs.has-changes == 'true'
+      run: |
+        git commit -m "Update ${{ inputs.plugin-name }} plugin to ${{ github.ref_name }}"
+
+    - name: Push branch
+      shell: bash
+      if: steps.check-changes.outputs.has-changes == 'true'
+      run: |
+        git push origin "${{ steps.create-branch.outputs.branch-name }}"
+
+    - name: Create pull request
+      shell: bash
+      if: steps.check-changes.outputs.has-changes == 'true'
+      id: create-pr
+      run: |
+        FORK_OWNER=$(echo "${{ inputs.push-to }}" | cut -d'/' -f1)
+
+        PR_URL=$(gh pr create \
+          --repo fastapi-practices/plugins \
+          --base "${UPSTREAM_BRANCH}" \
+          --head "${FORK_OWNER}:${{ steps.create-branch.outputs.branch-name }}" \
+          --title "Update ${{ inputs.plugin-name }} plugin to ${{ github.ref_name }}" \
+          --body "$(cat <<'EOF'
+        ## Summary
+
+        Automated submodule update for plugin **${{ inputs.plugin-name }}** to `${{ github.ref_name }}`.
+
+        | Field | Value |
+        |-------|-------|
+        | Plugin | `${{ inputs.plugin-name }}` |
+        | Triggered by | ${{ github.repository }}@${{ github.ref_name }} |
+        | Workflow run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |
+
+        ## Changes
+
+        This PR updates the `plugins/${{ inputs.plugin-name }}` submodule to `${{ github.ref_name }}`.
+
+        ---
+        *This PR was automatically created by [plugin-release](https://github.com/fastapi-practices/plugin-release) action.*
+        EOF
+        )")
+
+        echo "pr-url=${PR_URL}" >> "$GITHUB_OUTPUT"
+        PR_NUMBER=$(echo "${PR_URL}" | grep -oE '[0-9]+$')
+        echo "pr-number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+        echo "::notice::Pull request created: ${PR_URL}"
+      env:
+        GH_TOKEN: ${{ github.token }}
